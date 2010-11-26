@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+
+set -e
+set -x
+
+ORIGINAL_DIR=$(pwd)
+PORTAGE_DIR=$1
+
+if [ -z $PORTAGE_DIR ]; then
+  echo "Usage: $(basename $0) PORTAGE_DIR"
+  exit 1
+fi
+
+MYUID=$(id -u)
+MYGID=$(id -g)
+
+function install_ebuild() {
+	NAME=$1
+	BASENAME=$(basename $1)
+	EBUILD=$2
+
+	if equery list -e $NAME |grep $NAME; then
+		return
+	fi
+	
+	sudo mkdir -p $PORTAGE_DIR/$NAME/
+	sudo cp $BASENAME/$EBUILD $PORTAGE_DIR/$NAME/
+	sudo rsync -ap $BASENAME/files/ $PORTAGE_DIR/$NAME/files/
+	sudo ebuild $PORTAGE_DIR/$NAME/$EBUILD manifest merge
+}
+
+install_ebuild app-admin/eselect-boost 	eselect-boost-0.3.ebuild
+install_ebuild dev-util/boost-build 	boost-build-1.42.0.ebuild
+install_ebuild dev-libs/boost 		boost-1.42.0-r1.ebuild
+
+TMPDIR=$(mktemp -d)
+
+cd $TMPDIR
+
+git clone git://github.com/apache/thrift.git
+cd thrift
+git reset --hard 1237369cfc1b63c7b4c7e1a9455b2196c3fda006
+
+if [ ! -d /opt/thrift ]; then
+	./bootstrap.sh
+	./configure --prefix=/opt/thrift --without-py --without-java --without-erlang \
+		--without-ruby --without-py --without-perl --without-csharp --without-php \
+		--without-cpp
+
+	make
+
+	sudo mkdir /opt/thrift
+	sudo chown $MYUID:$MYGID /opt/thrift
+
+	make install
+fi
+
+if [ ! -d /opt/fb303 ]; then
+	cd contrib/fb303/
+	./bootstrap.sh
+	./configure --prefix=/opt/fb303 --with-thriftpath=/opt/thrift \
+		--without-py --without-ruby --without-cpp --without-java --without-php
+	make
+
+	sudo mkdir /opt/fb303
+	sudo chown $MYUID:$MYGID /opt/fb303
+
+	make install
+fi
+
+cd $TMPDIR
+
+git clone git://github.com/facebook/scribe.git
+cd scribe
+git reset --hard 2ee14d31efdbaa612e0e4c958862c9c0258f36eb
+
+if [ ! -d /opt/scribe ]; then
+	./bootstrap.sh
+	./configure --prefix=/opt/scribe --with-thriftpath=/opt/thrift --with-fb303path=/opt/fb303 \
+		--disable-gen-py --disable-gen-rb
+	make
+
+	sudo mkdir /opt/scribe
+	sudo chown $MYUID:$MYGID /opt/scribe
+
+	cd src
+	make install
+fi
+
+cd $ORIGINAL_DIR
+sudo cp binary /usr/local/bin/scribed
